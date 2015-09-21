@@ -1,0 +1,19 @@
+"Phrases"
+{
+	"JoinMsg"
+	{
+		"en"		"Type {lightgreen}!rss {default}to disable/enable the round start sounds."
+	}
+	"Selected"
+	{
+		"en"	  	"(X)"
+	}
+	"RSS_ON"
+	{
+		"en"	  	"Sounds ON."
+	}
+	"RSS_OFF"
+	{
+		"en"	  	"No Sounds."
+	}
+}
