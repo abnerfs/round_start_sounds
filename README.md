@@ -1,4 +1,4 @@
-#[CSS/CS:GO] AbNeR Round Start Sounds
+# [CSS/CS:GO] AbNeR Round Start Sounds
 SourceMod plugin to play cool musics when a round starts.
 
 # Compatible Games
