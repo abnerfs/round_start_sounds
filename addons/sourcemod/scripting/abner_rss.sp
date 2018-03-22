@@ -1,96 +1,79 @@
-/*
-	Thank you bro for downloading my plugin, it is a honor help you with your server.
-	Plugin by AbNeR_CSS @2015
-	
-	Plugin Features:
-	- CSS/CS:GO support.
-	- Sounds load automatically.
-	- Stops standard CSGO round start sound.
-	- Type !rss to choose if you want or not listen the sounds.
-
-	Se você é brasileiro acesse o forum do meu clan:
-	www.tecnohardclan.com/forum e receba suporte em português.
-
-*/
-
-
 #include <sourcemod>
 #include <sdktools>
 #include <colors>
 #include <clientprefs>
+#include <cstrike>
+#include <emitsoundany>
 
+#pragma newdecls required
 #pragma semicolon 1
+#define PLUGIN_VERSION "2.0.0"
 
-#define ABNER_ADMINFLAG ADMFLAG_SLAY
-#define PLUGIN_VERSION "1.0"
+//MapSounds Stuff
+int g_iSoundEnts[2048];
+int g_iNumSounds;
 
-#define MAX_EDICTS		2048
-#define MAX_SOUNDS		1024
+//Cvars
+ConVar g_hPath;
+ConVar g_hPlayType;
+ConVar g_hStop;
+ConVar g_PlayPrint;
+ConVar g_ClientSettings; 
+ConVar g_SoundVolume;
 
-new Handle:g_hPath;
-new Handle:g_hPlayType;
-new Handle:g_AbNeRCookie;
+bool CSGO;
+Handle g_PlayCookie;
+Handle g_VolumeCookie;
 
-new bool:g_bClientPreference[MAXPLAYERS+1];
-new bool:SoundsSucess = false;
-new bool:CSGO;
+//Sounds Arrays
+ArrayList soundsArray;
+StringMap soundNames;
 
-new g_Sounds = 0;
-
-new String:sounds[MAX_SOUNDS][PLATFORM_MAX_PATH];
-
-new String:sCookieValue[11];
-
-
-public Plugin:myinfo =
+public Plugin myinfo =
 {
-	name = "[ANY] AbNeR Round Start Sounds",
-	author = "AbNeR_CSS",
-	description = "Play cool musics when round starts!",
-	version = PLUGIN_VERSION,
-	url = "http://www.tecnohardclan.com/forum/"
+	name 			= "[CS:GO/CSS] AbNeR Round Start Sounds",
+	author 			= "AbNeR_CSS",
+	description 	= "Play cool musics when round starts!",
+	version 		= PLUGIN_VERSION,
+	url 			= "http://www.tecnohardclan.com/forum/"
 }
 
-public OnPluginStart()
+public void OnPluginStart()
 {  
 	//Cvars
-	CreateConVar("abner_rss_version", PLUGIN_VERSION, "Plugin version", FCVAR_PLUGIN|FCVAR_NOTIFY|FCVAR_REPLICATED);
-	g_hPath = CreateConVar("rss_path", "round_start", "Path off sounds in /YOURGAMEFOLDER/sound");
-	g_hPlayType = CreateConVar("rss_play_type", "1", "1 - Random, 2- Play in queue");
+	CreateConVar("abner_rss_version", PLUGIN_VERSION, "Plugin version", FCVAR_NOTIFY|FCVAR_REPLICATED);
+	
+	g_hPath                  = CreateConVar("rss_path", "misc/tecnohard", "Path of sounds played when round starts");
+	g_hPlayType                = CreateConVar("rss_play_type", "1", "1 - Random, 2 - Play in queue");
+	g_hStop                    = CreateConVar("rss_stop_map_music", "1", "Stop map musics");	
+	g_PlayPrint                = CreateConVar("rss_print_to_chat_mp3_name", "1", "Print mp3 name in chat (Suggested by m22b)");
+	g_ClientSettings	       = CreateConVar("rss_client_preferences", "1", "Enable/Disable client preferences");
+	g_SoundVolume 			   = CreateConVar("rss_default_volume", "0.75", "Default sound volume.");
 	
 	//ClientPrefs
-	g_AbNeRCookie = RegClientCookie("AbNeR Round Start Sounds", "", CookieAccess_Private);
-	new info;
-	SetCookieMenuItem(SoundCookieHandler, any:info, "AbNeR Round Start Sounds");
-	
-	for (new i = MaxClients; i > 0; --i)
-    {
-        if (!AreClientCookiesCached(i))
-        {
-            continue;
-        }
-        OnClientCookiesCached(i);
-    }
+	g_PlayCookie = RegClientCookie("AbNeR Round Start Sounds", "", CookieAccess_Private);
+	g_VolumeCookie = RegClientCookie("abner_rss_volume", "Round start sound volume", CookieAccess_Private);
+
+	SetCookieMenuItem(SoundCookieHandler, 0, "AbNeR Round Start Sounds");
 	
 	LoadTranslations("common.phrases");
 	LoadTranslations("abner_rss.phrases");
-		
 	AutoExecConfig(true, "abner_rss");
 
-	RegAdminCmd("rss_refresh", CommandLoad, ABNER_ADMINFLAG);
+	/* CMDS */
+	RegAdminCmd("rss_refresh", CommandLoad, ADMFLAG_SLAY);
 	RegConsoleCmd("rss", abnermenu);
+		
+	CSGO = GetEngineVersion() == Engine_CSGO;
 	
-	HookConVarChange(g_hPath, PathChange);
-	HookConVarChange(g_hPlayType, PathChange);
-	
-	decl String:theFolder[40];
-	GetGameFolderName(theFolder, sizeof(theFolder));
-	CSGO = StrEqual(theFolder, "csgo");
+	/* EVENTS */
 	HookEvent("round_start", Event_RoundStart, EventHookMode_PostNoCopy);
+	
+	soundsArray = new ArrayList(512);
+	soundNames = new StringMap();
 }
 
-
-stock bool:IsValidClient(client)
+stock bool IsValidClient(int client)
 {
 	if(client <= 0 ) return false;
 	if(client > MaxClients) return false;
@@ -98,63 +81,124 @@ stock bool:IsValidClient(client)
 	return IsClientInGame(client);
 }
 
-
-public SoundCookieHandler(client, CookieMenuAction:action, any:info, String:buffer[], maxlen)
+public void StopMapMusic()
 {
-	OnClientCookiesCached(client);
-	abnermenu(client, 0);
-} 
-
-public OnClientPutInServer(client)
-{
-	CreateTimer(3.0, msg, client);
-}
-
-public Action:msg(Handle:timer, any:client)
-{
-	if(IsValidClient(client))
-	{
-		CPrintToChat(client, "{default}{green}[AbNeR RSS]{default}%t", "JoinMsg");
+	char sSound[PLATFORM_MAX_PATH];
+	int entity = INVALID_ENT_REFERENCE;
+	for(int i=1;i<=MaxClients;i++){
+		if(!IsClientInGame(i)){ continue; }
+		for (int u=0; u<g_iNumSounds; u++){
+			entity = EntRefToEntIndex(g_iSoundEnts[u]);
+			if (entity != INVALID_ENT_REFERENCE){
+				GetEntPropString(entity, Prop_Data, "m_iszSound", sSound, sizeof(sSound));
+				Client_StopSound(i, entity, SNDCHAN_STATIC, sSound);
+			}
+		}
 	}
 }
 
-
-public Action:abnermenu(client, args)
+void Client_StopSound(int client, int entity, int channel, const char[] name)
 {
-	GetClientCookie(client, g_AbNeRCookie, sCookieValue, sizeof(sCookieValue));
-	new cookievalue = StringToInt(sCookieValue);
-	new Handle:g_AbNeRMenu = CreateMenu(AbNeRMenuHandler);
-	SetMenuTitle(g_AbNeRMenu, "Round Start Sounds by AbNeR_CSS");
-	decl String:Item[128];
+	EmitSoundToClient(client, name, entity, channel, SNDLEVEL_NONE, SND_STOP, 0.0, SNDPITCH_NORMAL, _, _, _, true);
+}
+
+
+public void Event_RoundStart(Handle event, const char[] name, bool dontBroadcast)
+{
+    bool MapMusic = GetConVarBool(g_hStop);
+    if(MapMusic)
+    {
+        // Ents are recreated every round.
+        g_iNumSounds = 0;
+
+        // Find all ambient sounds played by the map.
+        char sSound[PLATFORM_MAX_PATH];
+        int entity = INVALID_ENT_REFERENCE;
+
+        while ((entity = FindEntityByClassname(entity, "ambient_generic")) != INVALID_ENT_REFERENCE)
+        {
+            GetEntPropString(entity, Prop_Data, "m_iszSound", sSound, sizeof(sSound));
+
+            int len = strlen(sSound);
+            if (len > 4 && (StrEqual(sSound[len-3], "mp3") || StrEqual(sSound[len-3], "wav")))
+            {
+                g_iSoundEnts[g_iNumSounds++] = EntIndexToEntRef(entity);
+            }
+        }
+    }
+
+    bool Success = PlaySound(soundsArray, g_hPath);
+    if(Success && MapMusic)
+		StopMapMusic();
+}
+
+public void SoundCookieHandler(int client, CookieMenuAction action, any info, char[] buffer, int maxlen)
+{
+	abnermenu(client, 0);
+} 
+
+public void OnClientPutInServer(int client)
+{
+	if(GetConVarInt(g_ClientSettings) == 1)
+	{
+		CreateTimer(3.0, msg, client);
+	}
+}
+
+public Action msg(Handle timer, any client)
+{
+	if(IsValidClient(client))
+	{
+		CPrintToChat(client, "{default}{green}[AbNeR RSS] {default}%t", "JoinMsg");
+	}
+}
+
+public Action abnermenu(int client, int args)
+{
+	if(GetConVarInt(g_ClientSettings) != 1)
+	{
+		return Plugin_Handled;
+	}
+	
+	int cookievalue = GetIntCookie(client, g_PlayCookie);
+	Handle g_CookieMenu = CreateMenu(AbNeRMenuHandler);
+	SetMenuTitle(g_CookieMenu, "Round Start Sounds by AbNeR_CSS");
+	char Item[128];
 	if(cookievalue == 0)
 	{
 		Format(Item, sizeof(Item), "%t %t", "RSS_ON", "Selected"); 
-		AddMenuItem(g_AbNeRMenu, "ON", Item);
+		AddMenuItem(g_CookieMenu, "ON", Item);
 		Format(Item, sizeof(Item), "%t", "RSS_OFF"); 
-		AddMenuItem(g_AbNeRMenu, "OFF", Item);
+		AddMenuItem(g_CookieMenu, "OFF", Item);
 	}
 	else
 	{
 		Format(Item, sizeof(Item), "%t", "RSS_ON");
-		AddMenuItem(g_AbNeRMenu, "ON", Item);
+		AddMenuItem(g_CookieMenu, "ON", Item);
 		Format(Item, sizeof(Item), "%t %t", "RSS_OFF", "Selected"); 
-		AddMenuItem(g_AbNeRMenu, "OFF", Item);
+		AddMenuItem(g_CookieMenu, "OFF", Item);
 	}
-	SetMenuExitBackButton(g_AbNeRMenu, true);
-	SetMenuExitButton(g_AbNeRMenu, true);
-	DisplayMenu(g_AbNeRMenu, client, 30);
+
+	Format(Item, sizeof(Item), "%t", "VOLUME");
+	AddMenuItem(g_CookieMenu, "volume", Item);
+
+
+	SetMenuExitBackButton(g_CookieMenu, true);
+	SetMenuExitButton(g_CookieMenu, true);
+	DisplayMenu(g_CookieMenu, client, 30);
+	return Plugin_Continue;
 }
 
-public AbNeRMenuHandler(Handle:menu, MenuAction:action, param1, param2)
+public int AbNeRMenuHandler(Handle menu, MenuAction action, int client, int param2)
 {
-	new Handle:g_AbNeRMenu = CreateMenu(AbNeRMenuHandler);
+	Handle g_CookieMenu = CreateMenu(AbNeRMenuHandler);
 	if (action == MenuAction_DrawItem)
 	{
 		return ITEMDRAW_DEFAULT;
 	}
 	else if(param2 == MenuCancel_ExitBack)
 	{
-		ShowCookieMenu(param1);
+		ShowCookieMenu(client);
 	}
 	else if (action == MenuAction_Select)
 	{
@@ -162,160 +206,218 @@ public AbNeRMenuHandler(Handle:menu, MenuAction:action, param1, param2)
 		{
 			case 0:
 			{
-				SetClientCookie(param1, g_AbNeRCookie, "0");
-				abnermenu(param1, 0);
+				SetClientCookie(client, g_PlayCookie, "0");
+				abnermenu(client, 0);
 			}
 			case 1:
 			{
-				SetClientCookie(param1, g_AbNeRCookie, "1");
-				abnermenu(param1, 0);
+				SetClientCookie(client, g_PlayCookie, "1");
+				abnermenu(client, 0);
+			}
+			case 2: 
+			{
+				VolumeMenu(client);
 			}
 		}
-		CloseHandle(g_AbNeRMenu);
+		CloseHandle(g_CookieMenu);
 	}
 	return 0;
 }
 
+void VolumeMenu(int client){
+	
 
+	float volumeArray[] = { 1.0, 0.75, 0.50, 0.25, 0.10 };
+	float selectedVolume = GetClientVolume(client);
 
-public OnClientCookiesCached(client)
-{
-    decl String:sValue[8];
-    GetClientCookie(client, g_AbNeRCookie, sValue, sizeof(sValue));
-    
-    g_bClientPreference[client] = (sValue[0] != '\0' && StringToInt(sValue));
-} 
+	Menu volumeMenu = new Menu(VolumeMenuHandler);
+	volumeMenu.SetTitle("%t", "Sound Menu Title");
+	volumeMenu.ExitBackButton = true;
 
+	for(int i = 0; i < sizeof(volumeArray); i++)
+	{
+		char strInfo[10];
+		Format(strInfo, sizeof(strInfo), "%0.2f", volumeArray[i]);
 
-public PathChange(Handle:cvar, const String:oldVal[], const String:newVal[])
-{       
-	OnMapStart();
+		char display[20], selected[5];
+		if(volumeArray[i] == selectedVolume)
+			Format(selected, sizeof(selected), "%t", "Selected");
+
+		Format(display, sizeof(display), "%s %s", strInfo, selected);
+
+		volumeMenu.AddItem(strInfo, display);
+	}
+
+	volumeMenu.Display(client, MENU_TIME_FOREVER);
 }
 
-public OnMapStart()
+public int VolumeMenuHandler(Menu menu, MenuAction action, int client, int param2)
 {
-	LoadSounds(0);
+	if(action == MenuAction_Select){
+		char sInfo[10];
+		GetMenuItem(menu, param2, sInfo, sizeof(sInfo));
+		SetClientCookie(client, g_VolumeCookie, sInfo);
+		VolumeMenu(client);
+	}
+	else if(param2 == MenuCancel_ExitBack)
+	{
+		abnermenu(client, 0);
+	}
+}
+
+
+public void OnConfigsExecuted()
+{
+	RefreshSounds(0);
+}
+
+void RefreshSounds(int client)
+{
+    char soundPath[PLATFORM_MAX_PATH];
+    GetConVarString(g_hPath, soundPath, sizeof(soundPath));
+
+    ReplyToCommand(client, "[AbNeR RSS] SOUNDS: %d sounds loaded from \"sound/%s\"", LoadSounds(soundsArray, g_hPath), soundPath);
+    ParseSongNameKvFile();
+}
+
+
+public void ParseSongNameKvFile()
+{
+	soundNames.Clear();
+
+	char sPath[PLATFORM_MAX_PATH];
+	Format(sPath, sizeof(sPath), "configs/abner_rss.txt");
+	BuildPath(Path_SM, sPath, sizeof(sPath), sPath);
+
+	if (!FileExists(sPath))
+		return;
+
+	KeyValues hKeyValues = CreateKeyValues("Abner RSS");
+	if (!hKeyValues.ImportFromFile(sPath))
+		return;
+
+	if(hKeyValues.GotoFirstSubKey())
+	{
+		do
+		{
+			char sSectionName[255];
+			char sSongName[255];
+
+			hKeyValues.GetSectionName(sSectionName, sizeof(sSectionName));
+			hKeyValues.GetString("songname", sSongName, sizeof(sSongName));
+			soundNames.SetString(sSectionName, sSongName);
+		}
+		while(hKeyValues.GotoNextKey(false));
+	}
+	hKeyValues.Close();
 }
  
-LoadSounds(client)
+int LoadSounds(ArrayList arraySounds, ConVar pathConVar)
 {
-	new namelen;
-	new FileType:type;
-	new String:name[64];
-	new String:soundname[64];
-	new String:soundname2[64];
-	decl String:soundpath[PLATFORM_MAX_PATH];
-	decl String:soundpath2[PLATFORM_MAX_PATH];
-	GetConVarString(g_hPath, soundpath, sizeof(soundpath));
-	Format(soundpath2, sizeof(soundpath2), "sound/%s/", soundpath);
-	new Handle:pluginsdir = OpenDirectory(soundpath2);
-	g_Sounds = 0;
-	SoundsSucess = (pluginsdir != INVALID_HANDLE);
-	if(SoundsSucess)
+	arraySounds.Clear();
+	
+	char soundPath[PLATFORM_MAX_PATH];
+	char soundPathFull[PLATFORM_MAX_PATH];
+	GetConVarString(pathConVar, soundPath, sizeof(soundPath));
+	
+	Format(soundPathFull, sizeof(soundPathFull), "sound/%s/", soundPath);
+	DirectoryListing pluginsDir = OpenDirectory(soundPathFull);
+	
+	if(pluginsDir != null)
 	{
-		while(ReadDirEntry(pluginsdir,name,sizeof(name),type))
+		char fileName[128];
+		while(pluginsDir.GetNext(fileName, sizeof(fileName)))
 		{
-			namelen = strlen(name) - 4;
-			if(StrContains(name,".mp3",false) == namelen)
+			int extPosition = strlen(fileName) - 4;
+			if(StrContains(fileName,".mp3",false) == extPosition) //.mp3 Files Only
 			{
-				Format(soundname, sizeof(soundname), "sound/%s/%s", soundpath, name);
-				AddFileToDownloadsTable(soundname);
-				Format(soundname2, sizeof(soundname2), "%s/%s", soundpath, name);
-				if(g_Sounds < MAX_SOUNDS-1)
-					sounds[g_Sounds++] = soundname2;
+				char soundName[512];
+				Format(soundName, sizeof(soundName), "sound/%s/%s", soundPath, fileName);
+				AddFileToDownloadsTable(soundName);
+				
+				Format(soundName, sizeof(soundName), "%s/%s", soundPath, fileName);
+				PrecacheSoundAny(soundName);
+				arraySounds.PushString(soundName);
 			}
 		}
-		SoundsSucess = g_Sounds > 0;
-		if(IsValidClient(client))
-			ReplyToCommand(client, "[AbNeR RSS] SOUNDS: %d sounds loaded.", g_Sounds);
-		PrintToServer("[AbNeR RSS] SOUNDS: %d sounds loaded.", g_Sounds);
 	}
-	else
-	{
-		if(IsValidClient(client))
-			ReplyToCommand(client, "[AbNeR RSS] ERROR: Invalid \"rss_path\".");
-		PrintToServer("[AbNeR RSS] ERROR: Invalid \"rss_path\".");
-	}
+	return arraySounds.Length;
 }
-
-
-DeleteSound(rnd_sound)
+ 
+bool PlaySound(ArrayList arraySounds, ConVar pathConVar)
 {
-	for (new i = 0; i < g_Sounds; i++)
-	{
-		if(i >= rnd_sound)
-			sounds[i] = sounds[i+1];
-	}
-	if(--g_Sounds == 0)
-		LoadSounds(0);
-}
-
-PlaySoundCSGO()
-{
-	new soundToPlay;
+	if(arraySounds.Length <= 0)
+		return false;
+		
+	int soundToPlay = 0;
 	if(GetConVarInt(g_hPlayType) == 1)
 	{
-		soundToPlay = GetRandomInt(0, g_Sounds-1);
+		soundToPlay = GetRandomInt(0, arraySounds.Length-1);
 	}
-	else
+	
+	char szSound[128];
+	arraySounds.GetString(soundToPlay, szSound, sizeof(szSound));
+	arraySounds.Erase(soundToPlay);
+	PlayMusicAll(szSound);
+	if(arraySounds.Length == 0)
+		LoadSounds(arraySounds, pathConVar);
+		
+	return true;
+}
+
+void PlayMusicAll(char[] szSound)
+{
+	for (int i = 1; i <= MaxClients; i++)
 	{
-		soundToPlay = 0;
-	}
-	for (new i = 1; i <= MaxClients; i++)
-	{
-		GetClientCookie(i, g_AbNeRCookie, sCookieValue, sizeof(sCookieValue));
-		new cookievalue = StringToInt(sCookieValue);
-		if(IsValidClient(i) && cookievalue == 0)
+		if(IsValidClient(i) && (GetConVarInt(g_ClientSettings) == 0 || GetIntCookie(i, g_PlayCookie) == 0))
 		{
-			ClientCommand(i, "playgamesound Music.StopAllMusic");
-			ClientCommand(i, "play *%s", sounds[soundToPlay]);
+			if(CSGO)
+			{ 
+				ClientCommand(i, "playgamesound Music.StopAllMusic");
+			}
+			
+			float selectedVolume = GetClientVolume(i);
+			EmitSoundToClientAny(i, szSound, _, _, _, _, selectedVolume);
 		}
 	}
-	DeleteSound(soundToPlay);
+	
+	if(GetConVarInt(g_PlayPrint) == 1)
+	{
+		char soundKey[100];
+		char soundPrint[512];
+		char buffer[20][255];
+		
+		int numberRetrieved = ExplodeString(szSound, "/", buffer, sizeof(buffer), sizeof(buffer[]), false);
+		if (numberRetrieved > 0)
+			Format(soundKey, sizeof(soundKey), buffer[numberRetrieved - 1]);
+		
+		soundNames.GetString(soundKey, soundPrint, sizeof(soundPrint));
+						
+		CPrintToChatAll("{green}[AbNeR RSS] {default}%t", "mp3 print", !StrEqual(soundPrint, "") ? soundPrint : szSound);
+	}
 }
 
-PlaySound()
-{
-	new soundToPlay;
-	if(GetConVarInt(g_hPlayType) == 1)
-	{
-		soundToPlay = GetRandomInt(0, g_Sounds-1);
-	}
-	else
-	{
-		soundToPlay = 0;
-	}
-	for (new i = 1; i <= MaxClients; i++)
-	{
-		GetClientCookie(i, g_AbNeRCookie, sCookieValue, sizeof(sCookieValue));
-		new cookievalue = StringToInt(sCookieValue);
-		if(IsValidClient(i) && cookievalue == 0)
-		{
-			ClientCommand(i, "play %s", sounds[soundToPlay]);
-		}
-	}
-	DeleteSound(soundToPlay);
-}
-
-public Event_RoundStart(Handle:event, const String:name[], bool:dontBroadcast)
-{
-		if(SoundsSucess)
-			CSGO ? PlaySoundCSGO() : PlaySound();  //PRETTY COOL IF-ELSE METHOD
-		else
-			PrintToServer("[AbNeR RSS] SOUNDS ERROR: Sounds not loaded.");
-}
-
-
-public Action:CommandLoad(client, args)
+public Action CommandLoad(int client, int args)
 {   
-	LoadSounds(client);
+	RefreshSounds(client);
 	return Plugin_Handled;
 }
 
+float GetClientVolume(int client){
+	float defaultVolume = GetConVarFloat(g_SoundVolume);
 
+	char sCookieValue[11];
+	GetClientCookie(client, g_VolumeCookie, sCookieValue, sizeof(sCookieValue));
 
+	if(!GetConVarBool(g_ClientSettings) || StrEqual(sCookieValue, "") || StrEqual(sCookieValue, "0"))
+		Format(sCookieValue , sizeof(sCookieValue), "%0.2f", defaultVolume);
 
+	return StringToFloat(sCookieValue);
+}
 
-
-
-
+int GetIntCookie(int client, Handle handle)
+{
+	char sCookieValue[11];
+	GetClientCookie(client, handle, sCookieValue, sizeof(sCookieValue));
+	return StringToInt(sCookieValue);
+}

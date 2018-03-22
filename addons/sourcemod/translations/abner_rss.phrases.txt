@@ -1,19 +1,41 @@
 "Phrases"
 {
+	"VOLUME"
+	{
+		"en" 		"Volume"
+		"pt" 		"Volume"
+	}
 	"JoinMsg"
 	{
 		"en"		"Type {lightgreen}!rss {default}to disable/enable the round start sounds."
+		"pt" 		"Digite {lightgreen}!rss {default}para desativar/ativar os sons no começo da rodada."
 	}
 	"Selected"
 	{
 		"en"	  	"(X)"
+		"pt" 		"(X)"
 	}
+
+	"Sound Menu Title"
+	{
+		"en" 		"Select sound volume"
+		"pt"		"Selecione o volume dos sons"
+	}
+	
 	"RSS_ON"
 	{
 		"en"	  	"Sounds ON."
+		"pt"		"Sons Ativados."
 	}
 	"RSS_OFF"
 	{
 		"en"	  	"No Sounds."
+		"pt" 		"Sem sons."
+	}
+	"mp3 print"
+	{
+		"#format"	 "{1:s}"
+		"en" 			 "Now playing {green}{1}"
+		"pt"			 "Tocando {green}{1}"
 	}
 }
