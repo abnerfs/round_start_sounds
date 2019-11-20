@@ -1,4 +1,7 @@
 # [CSS/CS:GO] AbNeR Round Start Sounds
+
+![Downloads](https://img.shields.io/github/downloads/abnerfs/round_start_sounds/total) ![Last commit](https://img.shields.io/github/last-commit/abnerfs/round_start_sounds "Last commit") ![Open issues](https://img.shields.io/github/issues/abnerfs/round_start_sounds "Open Issues") ![Closed issues](https://img.shields.io/github/issues-closed/abnerfs/round_start_sounds "Closed Issues") ![Size](https://img.shields.io/github/repo-size/abnerfs/dontpad-api "Size")
+
 SourceMod plugin to play cool musics when a round starts.
 
 # Compatible Games
